@@ -1,0 +1,2155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<title>维刻时钟 Preserve Moment Clock</title>
+<style>
+    :root {
+        --clock-font-size: clamp(64px, 14vw, 96px);
+        --clock-weight: 300;
+        --quote-font-size: 20px;
+        --holiday-font-size: 17px;
+        --weather-font: 16px;
+        --ui-font: 14px;
+        --panel-min-width: 260px;
+        --panel-padding: 16px;
+        --panel-gap: 10px;
+        --input-w: 46px;
+        --btn-bg: rgba(0,0,0,0.35);
+        --panel-bg: rgba(0,0,0,0.65);
+        --toggle-off: rgba(255,255,255,0.35);
+        --toggle-on-sun: #428bff;
+        --toggle-on-moon: #788cb8;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+        height: 100%; width: 100%;
+        overflow: hidden; margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        background: #0b1a2e;
+        position: relative;
+    }
+
+    /* ===== 全局半透明滚动条 ===== */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.08);
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.3);
+        border-radius: 10px;
+        transition: background 0.2s ease;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.45); }
+    * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.08); }
+
+    .btn-icon {
+        width: 18px; height: 18px;
+        stroke: currentColor; fill: none;
+        stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+        vertical-align: middle;
+        transition: stroke 0.2s ease;
+    }
+    .btn-icon-tomato {
+        width: 20px; height: 20px;
+        fill: none; stroke: currentColor;
+        stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+        vertical-align: middle;
+    }
+
+    .sky {
+        position: fixed; inset: 0; z-index: 1;
+        background: linear-gradient(180deg, #050d1a 0%, #102a43 45%, #19375d 100%);
+        overflow: hidden;
+    }
+    .sky-bg {
+        position: absolute; inset: 0;
+        transition: background 2s ease;
+    }
+    .sun, .moon {
+        position: absolute; border-radius: 50%; z-index: 2;
+        transition: transform 0.8s ease, opacity 1s ease;
+        opacity: 0;
+    }
+    .sun {
+        width: 64px; height: 64px;
+        background: radial-gradient(circle,#e8f4ff,#b3d8ff 45%,#64a8ff);
+        box-shadow: 0 0 40px #82bdff, 0 0 80px #428bff;
+    }
+    .moon {
+        width: 56px; height: 56px;
+        background: radial-gradient(circle,#e6edf7,#b8c8e2 45%,#788cb8);
+        box-shadow: 0 0 30px #a1b4d8, 0 0 60px #697fa8;
+    }
+    .star, .rain { position: absolute; pointer-events: none; }
+    .star {
+        width: 2px; height: 2px; border-radius: 50%;
+        background: #fff; opacity: 0;
+        animation: twinkle 3s ease-in-out infinite;
+    }
+    .rain {
+        width: 1px; height: 18px;
+        background: rgba(200,220,255,0.45);
+        animation: rainFall 0.8s linear infinite;
+    }
+
+    .top-toast, .confirm-modal {
+        position: absolute; left: 50%;
+        transform: translateX(-50%);
+        background: var(--panel-bg);
+        backdrop-filter: blur(12px);
+        border-radius: 10px; color: #fff;
+        z-index: 999; display: none;
+    }
+    .top-toast {
+        top: calc(80px + env(safe-area-inset-top));
+        padding: 12px 22px;
+        font-size: var(--ui-font);
+    }
+    .top-toast.show { display: block; animation: toastPop 0.35s ease; }
+    .confirm-modal {
+        top: calc(130px + env(safe-area-inset-top));
+        padding: 16px 20px; border-radius: 12px;
+        align-items: center; gap: 12px;
+    }
+    .confirm-modal.show { display: flex; animation: toastPop 0.35s ease; }
+    .confirm-ok {
+        width: 36px; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.3);
+        background: rgba(255,255,255,0.22);
+        color: #fff; cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .confirm-ok:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.32);
+        border-color: rgba(255,255,255,0.45);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .confirm-ok:active {
+        transform: translateY(0) scale(0.96);
+        filter: brightness(1.3);
+    }
+
+    .top-left-setting {
+        position: absolute;
+        top: calc(24px + env(safe-area-inset-top));
+        left: 24px; z-index: 200;
+        display: flex; align-items: center; gap: 10px;
+    }
+    .setting-btn, .focus-btn, .toggle-btn {
+        width: 40px; height: 36px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--btn-bg);
+        backdrop-filter: blur(6px);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 8px; cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .setting-btn:hover, .focus-btn:hover, .toggle-btn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.42);
+        border-color: rgba(255,255,255,0.4);
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    }
+    .focus-btn.active {
+        background: rgba(255, 95, 110, 0.35);
+        border-color: rgba(255, 140, 150, 0.5);
+        box-shadow: 0 0 16px rgba(255, 95, 110, 0.25);
+    }
+    .focus-btn.active:hover {
+        background: rgba(255, 110, 125, 0.45);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 18px rgba(255, 95, 110, 0.3);
+    }
+    .setting-btn:active, .focus-btn:active, .toggle-btn:active {
+        transform: translateY(0) scale(0.96);
+        filter: brightness(1.25);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .setting-panel {
+        margin-top: 8px;
+        padding: var(--panel-padding);
+        background: var(--panel-bg);
+        backdrop-filter: blur(8px);
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #fff; display: none;
+        min-width: 320px;
+        max-height: calc(80vh - env(safe-area-inset-top));
+        overflow-y: auto;
+        z-index: 200;
+        font-size: var(--ui-font);
+        position: absolute; top: 100%; left: 0;
+    }
+    .setting-panel.show { display: block; }
+
+    .setting-row {
+        margin-bottom: 12px;
+        display: flex; align-items: center;
+        justify-content: space-between; gap: 12px;
+    }
+    .setting-row-sub { margin: 6px 0 6px 16px; }
+
+    .toggle {
+        position: relative;
+        width: 52px; height: 32px;
+        flex-shrink: 0; cursor: pointer;
+    }
+    .toggle input { display: none; }
+    .toggle-track {
+        width: 100%; height: 100%;
+        border-radius: 999px;
+        background: var(--toggle-off);
+        position: absolute; inset: 0;
+        transition: background 0.22s ease;
+    }
+    .toggle-thumb {
+        width: 26px; height: 26px;
+        border-radius: 50%; background: #fff;
+        position: absolute; left: 3px; top: 3px;
+        transition: transform 0.22s ease;
+    }
+    .toggle input:checked + .toggle-track { background: var(--toggle-on-moon); }
+    .toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); }
+    body.day-theme .toggle input:checked + .toggle-track { background: var(--toggle-on-sun); }
+
+    .panel-wrap {
+        position: absolute;
+        top: calc(24px + env(safe-area-inset-top));
+        right: 24px; z-index: 98;
+        display: flex; flex-direction: column;
+        gap: var(--panel-gap);
+        align-items: flex-end;
+        transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    body.focus-mode .panel-wrap {
+        opacity: 0; pointer-events: none;
+        transform: translateX(20px);
+    }
+
+    .panel-item {
+        display: flex; flex-direction: column;
+        align-items: flex-end; position: relative;
+    }
+
+    .panel {
+        margin-top: 8px;
+        padding: var(--panel-padding);
+        background: var(--panel-bg);
+        backdrop-filter: blur(8px);
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #fff; display: none;
+        min-width: var(--panel-min-width);
+        max-height: calc(70vh - env(safe-area-inset-top));
+        overflow-y: auto;
+        text-align: left;
+        font-size: var(--ui-font);
+    }
+    .panel.show { display: block; }
+
+    .time-input-row, .todo-add-row {
+        display: flex; gap: 6px;
+        margin-bottom: 12px; align-items: center;
+    }
+    .time-input-row input, .todo-add-row input {
+        padding: 6px 4px; text-align: center;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #fff; border-radius: 4px;
+        font-size: var(--ui-font);
+        width: var(--input-w);
+        transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .time-input-row input:focus, .todo-add-row input:focus {
+        outline: none;
+        border-color: rgba(255,255,255,0.45);
+        background: rgba(255,255,255,0.18);
+    }
+    .todo-add-row input { flex: 1; text-align: left; width: auto; }
+    .input-unit { font-size: var(--ui-font); opacity: 0.85; }
+
+    .ctrl-buttons { display: flex; gap: 8px; justify-content: flex-start; }
+    .ctrl-buttons button {
+        flex: 1; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 6px; cursor: pointer;
+        color: #fff; background: var(--btn-bg);
+        transition: all 0.2s ease;
+    }
+    .ctrl-buttons button:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.42);
+        border-color: rgba(255,255,255,0.45);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .ctrl-buttons button:active {
+        transform: translateY(0) scale(0.96);
+        filter: brightness(1.25);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .count-display {
+        font-size: var(--ui-font);
+        margin: 10px 0;
+        letter-spacing: 2px;
+    }
+
+    /* ===== 待办面板 ===== */
+    .todo-nav {
+        display: flex; align-items: center;
+        gap: 6px; margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+    }
+    .todo-nav-btn {
+        width: 26px; height: 26px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--btn-bg);
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 5px; color: #fff;
+        cursor: pointer; font-size: 16px;
+        line-height: 1; font-family: inherit;
+        transition: all 0.2s; flex-shrink: 0;
+    }
+    .todo-nav-btn:hover {
+        background: rgba(255,255,255,0.35);
+        border-color: rgba(255,255,255,0.45);
+    }
+    .todo-nav-btn:active {
+        transform: scale(0.94);
+        filter: brightness(1.2);
+    }
+    .todo-nav-title {
+        flex: 1; text-align: center;
+        font-size: var(--ui-font);
+        overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; padding: 0 4px;
+    }
+    .todo-planned-row {
+        display: flex; align-items: center;
+        gap: 6px; margin-bottom: 12px;
+        font-size: var(--ui-font);
+    }
+    .todo-planned-row input {
+        width: 56px; padding: 6px 4px;
+        text-align: center;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #fff; border-radius: 4px;
+        font-size: var(--ui-font);
+        transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .todo-planned-row input:focus {
+        outline: none;
+        border-color: rgba(255,255,255,0.45);
+        background: rgba(255,255,255,0.18);
+    }
+
+    .todo-list {
+        display: flex; flex-direction: column;
+        gap: 8px; max-height: 220px;
+        overflow-y: auto;
+    }
+    .todo-item {
+        display: flex; align-items: center;
+        gap: 8px; padding: 4px 6px;
+        margin: 0 -6px; border-radius: 4px;
+        transition: background 0.2s;
+        cursor: pointer;
+    }
+    .todo-item:hover { background: rgba(255,255,255,0.08); }
+    .todo-item.current { background: rgba(255,255,255,0.13); }
+    .todo-item-text { flex: 1; font-size: var(--ui-font); }
+    .todo-item-text.done { text-decoration: line-through; opacity: 0.55; }
+    .todo-del {
+        color: #ff9494; cursor: pointer;
+        transition: color 0.2s ease;
+        padding: 0 4px;
+    }
+    .todo-del:hover { color: #ff6b6b; }
+
+    .todo-add-btn {
+        width: 36px; height: 30px;
+        display: flex; align-items: center; justify-content: center;
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 4px;
+        background: var(--btn-bg);
+        color: #fff; cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .todo-add-btn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.42);
+        border-color: rgba(255,255,255,0.45);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    .todo-add-btn:active {
+        transform: translateY(0) scale(0.96);
+        filter: brightness(1.25);
+    }
+
+    /* ===== 待办面板底部：显示/隐藏学习条按钮 ===== */
+    .todo-study-toggle {
+        width: 100%; height: 30px;
+        display: flex; align-items: center; justify-content: center;
+        gap: 6px; margin-top: 10px;
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 4px;
+        background: var(--btn-bg);
+        color: #fff; font-size: var(--ui-font);
+        font-family: inherit; cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .todo-study-toggle:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.42);
+        border-color: rgba(255,255,255,0.45);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    .todo-study-toggle:active {
+        transform: translateY(0) scale(0.97);
+        filter: brightness(1.25);
+    }
+
+    /* ===== 计时器清除标记按钮（纯 CSS 交互） ===== */
+    #timerClearMarksBtn {
+        width: 100%; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 6px;
+        cursor: pointer;
+        color: #fff;
+        background: var(--btn-bg);
+        font-size: var(--ui-font);
+        font-family: inherit;
+        transition: all 0.2s ease;
+    }
+    #timerClearMarksBtn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.42);
+        border-color: rgba(255,255,255,0.45);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    #timerClearMarksBtn:active {
+        transform: translateY(0) scale(0.96);
+        filter: brightness(1.25);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    /* ===== 主屏幕学习控制条（独立组件，不依赖待办面板） ===== */
+    .study-bar {
+        position: absolute;
+        bottom: calc(90px + env(safe-area-inset-bottom));
+        left: 50%; transform: translateX(-50%);
+        display: none; flex-direction: column;
+        align-items: center; gap: 8px;
+        padding: 12px 20px;
+        background: rgba(0,0,0,0.55);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 14px; z-index: 20;
+        min-width: 300px; max-width: 90vw;
+        transition: opacity 0.3s ease;
+    }
+    .study-bar.show { display: flex; }
+
+    .study-task {
+        color: rgba(255,255,255,0.9);
+        font-size: var(--ui-font);
+        text-align: center;
+        max-width: 100%; overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .study-time {
+        color: #fff; font-size: 24px;
+        letter-spacing: 3px;
+        font-weight: 300;
+        text-shadow: 0 0 12px rgba(0,0,0,0.4);
+    }
+    .study-buttons { display: flex; gap: 8px; width: 100%; }
+    .study-btn {
+        flex: 1; padding: 8px 10px;
+        font-size: 13px; color: #fff;
+        background: var(--btn-bg);
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 6px; cursor: pointer;
+        transition: all 0.2s;
+        font-family: inherit;
+        white-space: nowrap;
+    }
+    .study-btn:hover:not(:disabled) {
+        background: rgba(255,255,255,0.4);
+        border-color: rgba(255,255,255,0.5);
+        transform: translateY(-1px);
+    }
+    .study-btn:active:not(:disabled) {
+        transform: translateY(0) scale(0.96);
+    }
+    .study-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .study-btn.study-start.active {
+        background: rgba(80, 200, 120, 0.4);
+        border-color: rgba(80, 200, 120, 0.7);
+        box-shadow: 0 0 12px rgba(80, 200, 120, 0.3);
+    }
+    .study-btn.study-break.active {
+        background: rgba(255, 160, 80, 0.4);
+        border-color: rgba(255, 160, 80, 0.7);
+        box-shadow: 0 0 12px rgba(255, 160, 80, 0.3);
+    }
+
+    /* ===== 专注统计弹窗 ===== */
+    .stats-modal {
+        position: absolute;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--panel-bg);
+        backdrop-filter: blur(15px);
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #fff; z-index: 1000;
+        display: none;
+        min-width: 320px; max-width: 90vw;
+        max-height: 70vh; overflow: hidden;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+    .stats-modal.show { display: flex; flex-direction: column; }
+    .stats-modal-header {
+        display: flex; justify-content: space-between;
+        align-items: center;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        font-size: var(--ui-font); flex-shrink: 0;
+    }
+    .stats-modal-close {
+        width: 26px; height: 26px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 5px;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #fff; cursor: pointer;
+        font-size: 18px; line-height: 1;
+        font-family: inherit;
+        transition: all 0.2s;
+    }
+    .stats-modal-close:hover { background: rgba(255,255,255,0.28); }
+    .stats-modal-body {
+        padding: 12px 16px;
+        overflow-y: auto;
+        font-size: var(--ui-font);
+    }
+    .stats-item {
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .stats-item:last-child { border-bottom: none; }
+    .stats-item-name {
+        font-weight: 500;
+        margin-bottom: 6px; color: #fff;
+    }
+    .stats-item-row {
+        display: flex; justify-content: space-between;
+        opacity: 0.85; margin-bottom: 3px;
+    }
+    .stats-item-rate {
+        color: #7fd88a; font-weight: 500;
+        opacity: 1 !important;
+    }
+
+    .center-wrap {
+        position: absolute; inset: 0; z-index: 5;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+    }
+    .pomodoro-top-inline {
+        margin-bottom: 10px; color: #fff;
+        font-size: 18px; letter-spacing: 2px;
+        text-shadow: 0 0 12px rgba(0,0,0,0.4);
+        display: none;
+    }
+    .pomodoro-top-inline.show { display: block; }
+
+    .exam-count-wrap { margin-bottom: 12px; }
+    .exam-count-text {
+        color: #fff; font-size: var(--holiday-font-size);
+        letter-spacing: 2px;
+        text-shadow: 0 0 20px rgba(0,0,0,0.4);
+    }
+
+    .time-display {
+        color: white;
+        font-size: var(--clock-font-size);
+        font-weight: var(--clock-weight);
+        letter-spacing: 6px;
+        text-shadow: 0 0 30px rgba(0,0,0,0.45);
+        background: rgba(0,0,0,0.22);
+        padding: 16px 36px;
+        border-radius: 20px;
+        backdrop-filter: blur(8px);
+    }
+    .ampm-tag { font-size: 0.5em; }
+
+    .main-saying {
+        margin-top: 24px;
+        color: rgba(255,255,255,0.85);
+        font-size: var(--quote-font-size);
+        letter-spacing: 3px;
+        text-shadow: 0 0 18px rgba(0,0,0,0.35);
+        text-align: center;
+        transition: opacity 0.3s ease;
+    }
+    body.focus-mode .main-saying { opacity: 0; }
+
+    .holiday-countdown-text {
+        margin-top: 12px;
+        color: rgba(255,255,255,0.72);
+        font-size: var(--holiday-font-size);
+        letter-spacing: 2px; text-align: center;
+        transition: opacity 0.3s ease;
+    }
+    body.focus-mode .holiday-countdown-text { opacity: 0; }
+
+    .weather-footer {
+        position: absolute;
+        bottom: calc(40px + env(safe-area-inset-bottom));
+        left: 50%; transform: translateX(-50%);
+        color: rgba(255,255,255,0.75);
+        font-size: var(--weather-font);
+        z-index: 10; text-align: center;
+        transition: opacity 0.3s ease;
+    }
+    body.focus-mode .weather-footer { opacity: 0; }
+
+    .copyright {
+        position: absolute;
+        bottom: calc(12px + env(safe-area-inset-bottom));
+        right: 16px;
+        color: rgba(255,255,255,0.45);
+        font-size: var(--ui-font);
+        z-index: 10;
+        transition: opacity 0.3s ease;
+    }
+    body.focus-mode .copyright { opacity: 0; }
+
+    .small-input { width: 56px !important; }
+    .pomodoro-row { margin-bottom: 8px; }
+    .pomodoro-label { font-size: var(--ui-font); margin-right: 4px; }
+
+    body.day-theme {
+        --btn-bg: rgba(255,255,255,0.32);
+        --panel-bg: rgba(255,255,255,0.28);
+    }
+    body.mobile-mode {
+        --clock-font-size: clamp(40px, 14vw, 64px);
+        --quote-font-size: 12px;
+        --holiday-font-size: 11px;
+        --weather-font: 11px;
+        --ui-font: 11px;
+        --panel-min-width: 180px;
+        --panel-padding: 10px;
+        --panel-gap: 6px;
+        --input-w: 34px;
+    }
+    body.mobile-mode .setting-panel,
+    body.mobile-mode .panel { max-width: 88vw; min-width: 220px; }
+    body.mobile-mode .time-display { padding: 10px 20px; }
+    body.mobile-mode .small-input { width: 40px !important; }
+    body.mobile-mode .study-bar { min-width: 240px; padding: 10px 14px; }
+    body.mobile-mode .study-time { font-size: 20px; }
+
+    @keyframes twinkle {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 1; }
+    }
+    @keyframes rainFall {
+        0% { transform: translateY(-20px); opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { transform: translateY(100vh); opacity: 0; }
+    }
+    @keyframes toastPop {
+        0% { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+        100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+</style>
+</head>
+<body>
+
+<div class="sky">
+    <div class="sky-bg" id="skyBg"></div>
+    <div class="sun" id="sun"></div>
+    <div class="moon" id="moon"></div>
+</div>
+
+<div class="top-toast" id="topToast"></div>
+
+<div class="confirm-modal" id="confirmModal">
+    <span class="confirm-modal-text" id="confirmText"></span>
+    <button class="confirm-ok" id="confirmOkBtn" title="确定">
+        <svg class="btn-icon" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+    </button>
+</div>
+
+<div class="top-left-setting">
+    <button class="setting-btn" id="settingBtn" title="设置">
+        <svg class="btn-icon" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.01 1.51V21a2 2 0 1 1-4 0v-.18a1.65 1.65 0 0 0-1.01-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1.01H3a2 2 0 1 1 0-4h.18a1.65 1.65 0 0 0 1.51-1.01 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1.01-1.51V3a2 2 0 1 1 4 0v.18a1.65 1.65 0 0 0 1.01 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1.01H21a2 2 0 1 1 0 4h-.18a1.65 1.65 0 0 0-1.51 1.01Z"/></svg>
+    </button>
+    <button class="focus-btn" id="focusBtn" title="专注模式">
+        <svg class="btn-icon" viewBox="0 0 24 24">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4"/>
+            <path d="M20 9V5a1 1 0 0 0-1-1h-4"/>
+            <path d="M4 15v4a1 1 0 0 0 1 1h4"/>
+            <path d="M20 15v4a1 1 0 0 1-1 1h-4"/>
+            <path d="M12 9v6"/>
+            <path d="M9 12h6"/>
+        </svg>
+    </button>
+
+    <div class="setting-panel" id="settingPanel">
+        <div class="setting-row">
+            <span>使用12小时制</span>
+            <label class="toggle">
+                <input type="checkbox" id="use12Hour">
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>手机模式</span>
+            <label class="toggle">
+                <input type="checkbox" id="mobileMode">
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row"><span>时钟大小</span><div></div></div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockSize" value="small" id="clkS">小号
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockSize" value="medium" id="clkM" checked>中号
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockSize" value="large" id="clkL">大号
+            </label>
+        </div>
+        <div class="setting-row"><span>时钟字重</span><div></div></div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockWeight" value="100" id="w100">细
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockWeight" value="300" id="w300" checked>标准
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="clockWeight" value="500" id="w500">粗
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示倒计时</span>
+            <label class="toggle">
+                <input type="checkbox" id="showCountdown" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示计时器</span>
+            <label class="toggle">
+                <input type="checkbox" id="showTimer" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示待办</span>
+            <label class="toggle">
+                <input type="checkbox" id="showTodo" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示学习控制条</span>
+            <label class="toggle">
+                <input type="checkbox" id="showStudyBar" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示番茄钟按钮</span>
+            <label class="toggle">
+                <input type="checkbox" id="showPomodoro" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示考试倒计时</span>
+            <label class="toggle">
+                <input type="checkbox" id="showExam" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示天气</span>
+            <label class="toggle">
+                <input type="checkbox" id="showWeather" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row">
+            <span>显示节假日倒计时</span>
+            <label class="toggle">
+                <input type="checkbox" id="showHoliday" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+        </div>
+        <div class="setting-row"><span>名言模式</span><div></div></div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="sayingMode" value="off" id="sayingOff">关闭
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="sayingMode" value="static" id="sayingStatic" checked>静态句子
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="sayingMode" value="daily" id="sayingDaily">每日一言
+            </label>
+        </div>
+        <div class="setting-row-sub">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="radio" name="sayingMode" value="poetry" id="sayingPoetry">每日诗词
+            </label>
+        </div>
+    </div>
+</div>
+
+<div class="panel-wrap" id="rightPanelWrap">
+    <div class="panel-item" id="itemCountdown">
+        <button class="toggle-btn" id="toggleCountdownBtn" title="倒计时">
+            <svg class="btn-icon" viewBox="0 0 24 24"><path d="M5 3h14M5 21h14"/><path d="M7 3v3a5 5 0 0 0 2 4l3 3 3-3a5 5 0 0 0 2-4V3"/><path d="M17 21v-3a5 5 0 0 0-2-4l-3-3-3 3a5 5 0 0 0-2 4v3"/></svg>
+        </button>
+        <div class="panel" id="countdownPanel">
+            <div class="time-input-row">
+                <input type="number" id="inpDay" min="0" value="0"><span class="input-unit">天</span>
+                <input type="number" id="inpHour" min="0" max="23" value="0"><span class="input-unit">时</span>
+                <input type="number" id="inpMin" min="0" max="59" value="5"><span class="input-unit">分</span>
+                <input type="number" id="inpSec" min="0" max="59" value="0"><span class="input-unit">秒</span>
+            </div>
+            <div class="count-display" id="customCountStr">0天 00时05分00秒</div>
+            <div class="ctrl-buttons">
+                <button id="startBtn" title="开始">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button id="pauseBtn" title="暂停">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><rect x="7" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="5" width="3" height="14" rx="1.5"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel-item" id="itemTimer">
+        <button class="toggle-btn" id="toggleTimerBtn" title="计时器">
+            <svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="14" r="8"/><path d="M12 6V2M9 2h6M12 10v4l2 2"/></svg>
+        </button>
+        <div class="panel" id="timerPanel">
+            <div class="count-display" style="font-size:24px;text-align:center;margin:16px 0;" id="timerDisplay">00:00.000</div>
+            <div class="ctrl-buttons">
+                <button id="timerStart" title="开始">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button id="timerPause" title="暂停">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><rect x="7" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="5" width="3" height="14" rx="1.5"/></svg>
+                </button>
+                <button id="timerReset" title="重置">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+                </button>
+                <button id="timerMark" title="标记">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M6 3v18"/><path d="M6 5h10l-2 4 2 4H6"/></svg>
+                </button>
+            </div>
+            <div style="margin-top:12px;font-size:var(--ui-font);">
+                标记记录：
+                <div id="timerMarkLog" style="max-height:80px;overflow:auto;margin-top:4px;"></div>
+            </div>
+            <div style="margin-top:10px;">
+                <button id="timerClearMarksBtn" title="清除标记">清除标记</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel-item" id="itemTodo">
+        <button class="toggle-btn" id="toggleTodoBtn" title="待办">
+            <svg class="btn-icon" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="5" cy="6" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="5" cy="18" r="1.5"/></svg>
+        </button>
+        <div class="panel" id="todoPanel">
+            <div class="todo-nav">
+                <button class="todo-nav-btn" id="todoPrevBtn" title="上一个任务">‹</button>
+                <span class="todo-nav-title" id="todoNavTitle">暂无任务</span>
+                <button class="todo-nav-btn" id="todoNextBtn" title="下一个任务">›</button>
+                <button class="todo-nav-btn" id="todoStatsBtn" title="专注统计">
+                    <svg class="btn-icon" style="width:14px;height:14px;" viewBox="0 0 24 24">
+                        <path d="M3 3v18h18"/>
+                        <path d="M7 15l4-4 4 3 5-6"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="todo-planned-row">
+                <span>预订工作：</span>
+                <input type="number" id="todoPlannedMin" min="1" value="25">
+                <span class="input-unit">分钟</span>
+            </div>
+            <div class="todo-add-row">
+                <input type="text" id="todoInput" placeholder="输入待办事项">
+                <button class="todo-add-btn" id="todoAddBtn" title="添加">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+            </div>
+            <div class="todo-list" id="todoListBox"></div>
+            <button class="todo-study-toggle" id="todoStudyToggle">
+                <svg class="btn-icon" style="width:14px;height:14px;" viewBox="0 0 24 24">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span id="todoStudyToggleText">隐藏学习条</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="panel-item" id="itemPomodoro">
+        <button class="toggle-btn" id="togglePomodoroBtn" title="番茄钟">
+            <svg class="btn-icon-tomato" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="14" r="8"/>
+                <path d="M12 3.5l1.8 2.2h2.7l-1.8 1.8.7 2.7L12 10.5 8.6 9.5l.7-2.7-1.8-1.8h2.7L12 3.5z"/>
+            </svg>
+        </button>
+        <div class="panel" id="pomodoroPanel">
+            <div class="time-input-row pomodoro-row">
+                <span class="pomodoro-label">工作：</span>
+                <input class="small-input" type="number" id="pomodoroWorkMin" min="1" value="25"><span class="input-unit">分钟</span>
+            </div>
+            <div class="time-input-row pomodoro-row">
+                <span class="pomodoro-label">休息：</span>
+                <input class="small-input" type="number" id="pomodoroRestMin" min="1" value="5"><span class="input-unit">分钟</span>
+            </div>
+            <div class="count-display" id="pomodoroCountStr">25分00秒</div>
+            <div style="font-size:var(--ui-font);margin-bottom:8px;">
+                当前：<span id="pomodoroModeText">工作</span>
+            </div>
+            <div class="ctrl-buttons">
+                <button id="pomodoroStart" title="开始">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button id="pomodoroPause" title="暂停">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><rect x="7" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="5" width="3" height="14" rx="1.5"/></svg>
+                </button>
+                <button id="pomodoroReset" title="重置">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+                </button>
+            </div>
+            <div class="setting-row" style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.15);padding-top:12px;margin-bottom:0;">
+                <span>时钟上方显示倒计时</span>
+                <label class="toggle">
+                    <input type="checkbox" id="showPomodoroTop">
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel-item" id="itemExam">
+        <button class="toggle-btn" id="toggleExamBtn" title="考试倒计时">
+            <svg class="btn-icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+        </button>
+        <div class="panel" id="examPanel">
+            <div class="time-input-row">
+                <input class="small-input" type="number" id="examY" placeholder="年"><span class="input-unit">年</span>
+                <input class="small-input" type="number" id="examM" placeholder="月"><span class="input-unit">月</span>
+                <input class="small-input" type="number" id="examD" placeholder="日"><span class="input-unit">日</span>
+            </div>
+            <div class="ctrl-buttons">
+                <button id="examSetBtn" title="确定">
+                    <svg class="btn-icon" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+                </button>
+            </div>
+            <div class="setting-row" style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.15);padding-top:12px;margin-bottom:0;">
+                <span>显示到主界面</span>
+                <label class="toggle">
+                    <input type="checkbox" id="examShowSwitch">
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="center-wrap">
+    <div class="exam-count-wrap" id="examCountWrap">
+        <div class="exam-count-text" id="examCountText"></div>
+    </div>
+    <div class="pomodoro-top-inline" id="pomodoroTopInline">番茄：25分00秒【工作】</div>
+    <div class="time-display" id="timeStr"></div>
+    <div class="main-saying" id="mainSaying"></div>
+    <div class="holiday-countdown-text" id="holidayCountStr"></div>
+</div>
+
+<div class="study-bar" id="studyBar">
+    <div class="study-task" id="studyTaskName">当前任务</div>
+    <div class="study-time" id="studyTimeDisplay">00:00:00</div>
+    <div class="study-buttons">
+        <button class="study-btn study-start" id="studyStartBtn">开始学习</button>
+        <button class="study-btn study-break" id="studyBreakBtn">摸鱼休息</button>
+        <button class="study-btn study-end" id="studyEndBtn">学习结束</button>
+    </div>
+</div>
+
+<div class="stats-modal" id="statsModal">
+    <div class="stats-modal-header">
+        <span>专注统计</span>
+        <button class="stats-modal-close" id="statsModalClose">×</button>
+    </div>
+    <div class="stats-modal-body" id="statsModalBody"></div>
+</div>
+
+<div class="weather-footer" id="weatherFooter">获取定位与天气中…</div>
+<div class="copyright">维刻时钟 By Visscon</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    'use strict';
+
+    const $ = id => document.getElementById(id);
+    const el = {
+        skyBg: $('skyBg'), sun: $('sun'), moon: $('moon'),
+        skyWrap: document.querySelector('.sky'),
+        timeStr: $('timeStr'),
+        weatherFooter: $('weatherFooter'),
+        holidayCountStr: $('holidayCountStr'),
+        topToast: $('topToast'),
+        confirmModal: $('confirmModal'),
+        confirmText: $('confirmText'),
+        confirmOkBtn: $('confirmOkBtn'),
+        mainSayingEl: $('mainSaying'),
+        settingBtn: $('settingBtn'),
+        settingPanel: $('settingPanel'),
+        focusBtn: $('focusBtn'),
+        use12Hour: $('use12Hour'),
+        mobileModeCb: $('mobileMode'),
+        clkS: $('clkS'), clkM: $('clkM'), clkL: $('clkL'),
+        w100: $('w100'), w300: $('w300'), w500: $('w500'),
+        showCountdown: $('showCountdown'),
+        showTimer: $('showTimer'),
+        showTodo: $('showTodo'),
+        showStudyBar: $('showStudyBar'),
+        showPomodoro: $('showPomodoro'),
+        showExam: $('showExam'),
+        examShowSwitch: $('examShowSwitch'),
+        showWeather: $('showWeather'),
+        showHoliday: $('showHoliday'),
+        showPomodoroTop: $('showPomodoroTop'),
+        sayingOff: $('sayingOff'),
+        sayingStatic: $('sayingStatic'),
+        sayingDaily: $('sayingDaily'),
+        sayingPoetry: $('sayingPoetry'),
+        itemCountdown: $('itemCountdown'),
+        itemTimer: $('itemTimer'),
+        itemTodo: $('itemTodo'),
+        itemPomodoro: $('itemPomodoro'),
+        itemExam: $('itemExam'),
+        toggleCountdownBtn: $('toggleCountdownBtn'),
+        countdownPanel: $('countdownPanel'),
+        toggleTimerBtn: $('toggleTimerBtn'),
+        timerPanel: $('timerPanel'),
+        toggleTodoBtn: $('toggleTodoBtn'),
+        todoPanel: $('todoPanel'),
+        togglePomodoroBtn: $('togglePomodoroBtn'),
+        pomodoroPanel: $('pomodoroPanel'),
+        toggleExamBtn: $('toggleExamBtn'),
+        examPanel: $('examPanel'),
+        inpDay: $('inpDay'), inpHour: $('inpHour'),
+        inpMin: $('inpMin'), inpSec: $('inpSec'),
+        startBtn: $('startBtn'), pauseBtn: $('pauseBtn'),
+        customCountStr: $('customCountStr'),
+        timerDisplay: $('timerDisplay'),
+        timerStart: $('timerStart'),
+        timerPause: $('timerPause'),
+        timerReset: $('timerReset'),
+        timerMark: $('timerMark'),
+        timerMarkLog: $('timerMarkLog'),
+        timerClearMarksBtn: $('timerClearMarksBtn'),
+        todoPrevBtn: $('todoPrevBtn'),
+        todoNextBtn: $('todoNextBtn'),
+        todoNavTitle: $('todoNavTitle'),
+        todoStatsBtn: $('todoStatsBtn'),
+        todoPlannedMin: $('todoPlannedMin'),
+        todoInput: $('todoInput'),
+        todoAddBtn: $('todoAddBtn'),
+        todoListBox: $('todoListBox'),
+        todoStudyToggle: $('todoStudyToggle'),
+        todoStudyToggleText: $('todoStudyToggleText'),
+        studyBar: $('studyBar'),
+        studyTaskName: $('studyTaskName'),
+        studyTimeDisplay: $('studyTimeDisplay'),
+        studyStartBtn: $('studyStartBtn'),
+        studyBreakBtn: $('studyBreakBtn'),
+        studyEndBtn: $('studyEndBtn'),
+        statsModal: $('statsModal'),
+        statsModalClose: $('statsModalClose'),
+        statsModalBody: $('statsModalBody'),
+        pomodoroWorkMin: $('pomodoroWorkMin'),
+        pomodoroRestMin: $('pomodoroRestMin'),
+        pomodoroCountStr: $('pomodoroCountStr'),
+        pomodoroModeText: $('pomodoroModeText'),
+        pomodoroStart: $('pomodoroStart'),
+        pomodoroPause: $('pomodoroPause'),
+        pomodoroReset: $('pomodoroReset'),
+        examY: $('examY'), examM: $('examM'), examD: $('examD'),
+        examSetBtn: $('examSetBtn'),
+        examCountText: $('examCountText'),
+        examCountWrap: $('examCountWrap'),
+        pomodoroTopInline: $('pomodoroTopInline')
+    };
+
+    const MS = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+    const FALLBACK = { lat: 30.57, lon: 103.92 };
+    const STORAGE = {
+        TODO: 'skyclock_todo',
+        SAYING: 'skyclock_saying',
+        SAYING_DATE: 'skyclock_saying_date',
+        POETRY: 'skyclock_poetry',
+        POETRY_DATE: 'skyclock_poetry_date',
+        SHOW_STUDY_BAR: 'skyclock_show_study_bar'
+    };
+    const STATIC_SENTENCE = '永远相信美好的事情即将发生';
+    const WEATHER_MAP = {
+        0:['晴朗','clear'], 1:['晴转多云','clear'], 2:['多云','clear'],
+        3:['阴天','cloudy'], 45:['雾','cloudy'], 48:['冻雾','cloudy'],
+        51:['小雨','rainy'], 53:['中雨','rainy'], 55:['大雨','rainy'],
+        61:['小雨','rainy'], 63:['中雨','rainy'], 65:['大雨','rainy']
+    };
+
+    let sunriseTs = null, sunsetTs = null;
+    let weatherType = 'clear', weatherLock = false;
+    let countTotal = 5 * MS.m, countRemain = countTotal;
+    let countRunning = false, countTimer = null;
+    let timerMs = 0, timerRunning = false, timerInterval = null;
+    let todoList = [];
+    let currentTaskIdx = 0;
+    let studyState = 'idle';
+    let sessionStartAt = 0;
+    let focusStartAt = 0;
+    let focusAccumulated = 0;
+    let pomoWork = 25 * MS.m, pomoRest = 5 * MS.m;
+    let pomoRemain = pomoWork;
+    let pomoRunning = false, pomoTimer = null;
+    let pomoIsWork = true;
+    let pomoCallback = null;
+    let examTarget = null;
+    let focusMode = false;
+
+    const pad2 = n => String(Math.max(0, Math.floor(n))).padStart(2, '0');
+    const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function safeRun(fn, label){
+        try { fn(); } catch(e) {
+            console.error('[safeRun:' + (label||'?') + ']', e);
+        }
+    }
+
+    function toast(text){
+        if (!el.topToast) return;
+        el.topToast.textContent = text;
+        el.topToast.classList.add('show');
+        setTimeout(() => el.topToast && el.topToast.classList.remove('show'), 2200);
+    }
+    function confirmBox(text, callback){
+        if (!el.confirmModal) return;
+        el.confirmText.textContent = text;
+        el.confirmModal.classList.add('show');
+        pomoCallback = callback;
+    }
+    if (el.confirmOkBtn) {
+        el.confirmOkBtn.addEventListener('click', () => {
+            el.confirmModal.classList.remove('show');
+            if (typeof pomoCallback === 'function') pomoCallback();
+            pomoCallback = null;
+        });
+    }
+
+    function fmtCount(ms){
+        if (ms <= 0) return '0天 00时00分00秒';
+        const d = Math.floor(ms / MS.d);
+        const h = Math.floor((ms % MS.d) / MS.h);
+        const m = Math.floor((ms % MS.h) / MS.m);
+        const s = Math.floor((ms % MS.m) / MS.s);
+        return d + '天 ' + pad2(h) + '时' + pad2(m) + '分' + pad2(s) + '秒';
+    }
+    function fmtMinSec(ms){
+        if (ms <= 0) return '00分00秒';
+        const m = Math.floor(ms / MS.m);
+        const s = Math.floor((ms % MS.m) / MS.s);
+        return pad2(m) + '分' + pad2(s) + '秒';
+    }
+    function fmtTimer(ms){
+        const total = Math.floor(ms / MS.s);
+        const min = Math.floor(total / 60);
+        const sec = total % 60;
+        const milli = Math.floor(ms % MS.s);
+        return pad2(min) + ':' + pad2(sec) + '.' + String(milli).padStart(3, '0');
+    }
+    function fmtClock(date, is12h){
+        let h = date.getHours();
+        const m = date.getMinutes();
+        const s = date.getSeconds();
+        let suffix = '';
+        if (is12h) {
+            const sf = h >= 12 ? ' PM' : ' AM';
+            h = h % 12 || 12;
+            suffix = '<span class="ampm-tag">' + sf + '</span>';
+        }
+        return pad2(h) + ':' + pad2(m) + ':' + pad2(s) + suffix;
+    }
+    function todayStr(){
+        const d = new Date();
+        return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    }
+    function fetchWithTimeout(url, ms, options){
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), ms);
+        const opts = Object.assign({}, options || {}, { signal: controller.signal });
+        return fetch(url, opts).finally(() => clearTimeout(timeoutId));
+    }
+    function fmtDuration(ms){
+        if (ms <= 0) return '00:00:00';
+        const h = Math.floor(ms / MS.h);
+        const m = Math.floor((ms % MS.h) / MS.m);
+        const s = Math.floor((ms % MS.m) / MS.s);
+        return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+    }
+    function fmtDurationFriendly(ms){
+        if (ms <= 0) return '0 分钟';
+        const h = Math.floor(ms / MS.h);
+        const m = Math.floor((ms % MS.h) / MS.m);
+        if (h > 0 && m > 0) return h + ' 小时 ' + m + ' 分';
+        if (h > 0) return h + ' 小时';
+        if (m > 0) return m + ' 分钟';
+        return Math.floor(ms / MS.s) + ' 秒';
+    }
+
+    // ===== 农历节假日 =====
+    function getLunarMonthDay(date){
+        try {
+            const parts = new Intl.DateTimeFormat('zh-CN-u-ca-chinese', { month: 'numeric', day: 'numeric' }).formatToParts(date);
+            let month = null, day = null;
+            for (const p of parts) {
+                if (p.type === 'month') month = parseInt(p.value, 10);
+                if (p.type === 'day') day = parseInt(p.value, 10);
+            }
+            return { month, day };
+        } catch(e) { return null; }
+    }
+    function isLeapMonth(date){
+        try {
+            const parts = new Intl.DateTimeFormat('zh-CN-u-ca-chinese', { month: 'numeric' }).formatToParts(date);
+            for (const p of parts) {
+                if (p.type === 'month' && p.value.includes('闰')) return true;
+            }
+        } catch(e) {}
+        return false;
+    }
+    const LUNAR_HOLIDAYS = [
+        { name: '春节', month: 1, day: 1 },
+        { name: '端午节', month: 5, day: 5 },
+        { name: '中秋节', month: 8, day: 15 }
+    ];
+    const SOLAR_HOLIDAYS = [
+        { name: '元旦', month: 1, day: 1 },
+        { name: '劳动节', month: 5, day: 1 },
+        { name: '国庆节', month: 10, day: 1 }
+    ];
+    const QINGMING = { name: '清明节', month: 4, day: 5 };
+
+    function getNextHoliday(){
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const candidates = [];
+        for (const h of SOLAR_HOLIDAYS) {
+            let d = new Date(today.getFullYear(), h.month - 1, h.day);
+            if (d < today) d = new Date(today.getFullYear() + 1, h.month - 1, h.day);
+            candidates.push({ name: h.name, date: d.getTime() });
+        }
+        {
+            let d = new Date(today.getFullYear(), QINGMING.month - 1, QINGMING.day);
+            if (d < today) d = new Date(today.getFullYear() + 1, QINGMING.month - 1, QINGMING.day);
+            candidates.push({ name: QINGMING.name, date: d.getTime() });
+        }
+        if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+            let found = 0;
+            for (let i = 0; i <= 400 && found < LUNAR_HOLIDAYS.length; i++) {
+                const check = new Date(today.getTime() + i * MS.d);
+                const lunar = getLunarMonthDay(check);
+                if (!lunar) continue;
+                if (isLeapMonth(check)) continue;
+                for (const h of LUNAR_HOLIDAYS) {
+                    if (lunar.month === h.month && lunar.day === h.day) {
+                        const exists = candidates.some(c => c.name === h.name &&
+                            new Date(c.date).toDateString() === check.toDateString());
+                        if (!exists) {
+                            candidates.push({ name: h.name, date: check.getTime() });
+                            found++;
+                        }
+                    }
+                }
+            }
+        }
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => a.date - b.date);
+        return candidates[0];
+    }
+    let holidayCache = { dateKey: '', text: '' };
+
+    // ===== tick 各部分独立 =====
+    function tickClock(){
+        if (!el.timeStr || !el.use12Hour) return;
+        el.timeStr.innerHTML = fmtClock(new Date(), el.use12Hour.checked);
+    }
+    function tickHoliday(){
+        if (!el.showHoliday || !el.showHoliday.checked || !el.holidayCountStr) return;
+        const key = new Date().toDateString();
+        if (holidayCache.dateKey === key && holidayCache.text) {
+            el.holidayCountStr.textContent = holidayCache.text;
+            return;
+        }
+        const next = getNextHoliday();
+        if (!next) {
+            el.holidayCountStr.textContent = '';
+            holidayCache = { dateKey: key, text: '' };
+            return;
+        }
+        const diff = next.date - Date.now();
+        const text = '距离' + next.name + '还有 ' + Math.ceil(diff / MS.d) + ' 天';
+        holidayCache = { dateKey: key, text };
+        el.holidayCountStr.textContent = text;
+    }
+    function tickSky(){
+        if (!el.skyBg) return;
+        const now = new Date();
+        const h = now.getHours();
+        let bg;
+        if (h >= 5 && h < 7) bg = 'linear-gradient(180deg, #ff9a8b 0%, #ffd89b 45%, #ff6b6b 100%)';
+        else if (h >= 7 && h < 17) bg = 'linear-gradient(180deg, #4facfe 0%, #00f2fe 100%)';
+        else if (h >= 17 && h < 20) bg = 'linear-gradient(180deg, #1a2533 0%, #e65c3c 35%, #ff9e64 70%, #ffdd99 100%)';
+        else bg = 'linear-gradient(180deg, #050d1a 0%, #102a43 45%, #19375d 100%)';
+        el.skyBg.style.background = bg;
+
+        const nowMs = Date.now();
+        const rise = sunriseTs || new Date().setHours(7, 0, 0, 0);
+        const set = sunsetTs || new Date().setHours(19, 0, 0, 0);
+        const mobile = document.body.classList.contains('mobile-mode');
+        const sox = mobile ? 160 : 280, soy = mobile ? -130 : -220;
+        const mox = mobile ? 145 : 260, moy = mobile ? -115 : -200;
+        let sx = 0, sy = 0, sop = 0, mx = 0, my = 0, mop = 0;
+        if (nowMs >= rise && nowMs < set) {
+            const p = (nowMs - rise) / (set - rise);
+            const rad = Math.PI * p;
+            sx = Math.cos(Math.PI + rad) * sox;
+            sy = Math.sin(rad) * soy;
+            sop = 1;
+        } else {
+            const night = MS.d - (set - rise);
+            const p = nowMs >= set ? (nowMs - set) / night : ((nowMs + MS.d) - set) / night;
+            const rad = Math.PI * p;
+            mx = Math.cos(Math.PI + rad) * mox;
+            my = Math.sin(rad) * moy;
+            mop = 1;
+        }
+        if (el.sun) {
+            el.sun.style.transform = 'translate(' + sx + 'px, ' + sy + 'px)';
+            el.sun.style.opacity = sop;
+        }
+        if (el.moon) {
+            el.moon.style.transform = 'translate(' + mx + 'px, ' + my + 'px)';
+            el.moon.style.opacity = mop;
+        }
+        document.body.classList.toggle('day-theme', nowMs >= rise && nowMs < set);
+    }
+    function tickExam(){
+        if (!el.examShowSwitch || !el.examCountWrap) return;
+        if (!el.examShowSwitch.checked || !examTarget) {
+            el.examCountWrap.style.display = 'none';
+            return;
+        }
+        el.examCountWrap.style.display = 'block';
+        const diff = examTarget - Date.now();
+        if (diff <= 0) {
+            el.examCountText.textContent = '考试已结束';
+            return;
+        }
+        const day = Math.floor(diff / MS.d);
+        const h = Math.floor((diff % MS.d) / MS.h);
+        const m = Math.floor((diff % MS.h) / MS.m);
+        el.examCountText.textContent = '距离考试：' + day + '天 ' + h + '时' + m + '分';
+    }
+
+    function tick(){
+        safeRun(tickClock, 'clock');
+        safeRun(tickHoliday, 'holiday');
+        safeRun(tickExam, 'exam');
+        safeRun(tickSky, 'sky');
+        safeRun(updateStudyBar, 'studyBar');
+    }
+
+    // ===== 每日一言 =====
+    async function fetchSayingFromUapi(){
+        try {
+            const res = await fetchWithTimeout('https://uapis.cn/api/v1/saying/random?mode=daily', 8000);
+            if (!res.ok) return null;
+            const json = await res.json();
+            if (json.item && typeof json.item.content === 'string' && json.item.content.trim()) return json.item.content.trim();
+            if (typeof json.content === 'string' && json.content.trim()) return json.content.trim();
+            if (typeof json.text === 'string' && json.text.trim()) return json.text.trim();
+        } catch(e) { console.warn('[一言·UAPI] 失败:', e.message); }
+        return null;
+    }
+    async function fetchSayingFromHitokoto(){
+        try {
+            const res = await fetchWithTimeout('https://v1.hitokoto.cn/', 8000);
+            if (!res.ok) return null;
+            const json = await res.json();
+            if (json && typeof json.hitokoto === 'string' && json.hitokoto.trim()) return json.hitokoto.trim();
+        } catch(e) { console.warn('[一言·Hitokoto] 失败:', e.message); }
+        return null;
+    }
+    async function fetchSayingFromYviii(){
+        try {
+            const res = await fetchWithTimeout('https://api.yviii.com/yiyan/yi.php', 8000);
+            if (!res.ok) return null;
+            const text = await res.text();
+            if (text && text.trim()) return text.trim();
+        } catch(e) { console.warn('[一言·YVIII] 失败:', e.message); }
+        return null;
+    }
+    async function fetchDailySaying(){
+        let text = await fetchSayingFromUapi();
+        if (text) return text;
+        text = await fetchSayingFromHitokoto();
+        if (text) return text;
+        text = await fetchSayingFromYviii();
+        if (text) return text;
+        return null;
+    }
+
+    // ===== 每日诗词 =====
+    function loadJinrishiciSDK(){
+        return new Promise((resolve) => {
+            if (window.jinrishici) { resolve(); return; }
+            const script = document.createElement('script');
+            script.src = 'https://sdk.jinrishici.com/v2/browser/jinrishici.js';
+            script.charset = 'utf-8';
+            script.onload = () => resolve();
+            script.onerror = () => { console.warn('[每日诗词] SDK 加载失败'); resolve(); };
+            document.head.appendChild(script);
+        });
+    }
+    async function fetchDailyPoetry(){
+        await loadJinrishiciSDK();
+        if (!window.jinrishici) return null;
+        return new Promise((resolve) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (!settled) { settled = true; resolve(null); }
+            }, 8000);
+            try {
+                window.jinrishici.load(function(result){
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    if (result && result.status === 'success' && result.data && result.data.content) {
+                        resolve(result.data.content.trim());
+                    } else {
+                        resolve(null);
+                    }
+                });
+            } catch(e) {
+                if (!settled) { settled = true; clearTimeout(timer); resolve(null); }
+            }
+        });
+    }
+
+    async function loadSaying(){
+        try {
+            if (!el.mainSayingEl) return;
+            const modeEl = document.querySelector('input[name="sayingMode"]:checked');
+            const mode = modeEl ? modeEl.value : 'static';
+            if (mode === 'off') {
+                el.mainSayingEl.textContent = '';
+                el.mainSayingEl.style.marginTop = '0px';
+                return;
+            }
+            el.mainSayingEl.style.marginTop = '24px';
+            if (mode === 'static') {
+                el.mainSayingEl.textContent = STATIC_SENTENCE;
+                return;
+            }
+            const today = todayStr();
+            if (mode === 'daily') {
+                let cachedText = null, cachedDate = null;
+                try {
+                    cachedText = localStorage.getItem(STORAGE.SAYING);
+                    cachedDate = localStorage.getItem(STORAGE.SAYING_DATE);
+                } catch(e) {}
+                if (cachedText === STATIC_SENTENCE) {
+                    try {
+                        localStorage.removeItem(STORAGE.SAYING);
+                        localStorage.removeItem(STORAGE.SAYING_DATE);
+                    } catch(e) {}
+                    cachedText = null; cachedDate = null;
+                }
+                if (cachedDate === today && cachedText) {
+                    el.mainSayingEl.textContent = cachedText;
+                    return;
+                }
+                const text = await fetchDailySaying();
+                if (text) {
+                    try {
+                        localStorage.setItem(STORAGE.SAYING_DATE, today);
+                        localStorage.setItem(STORAGE.SAYING, text);
+                    } catch(e) {}
+                    el.mainSayingEl.textContent = text;
+                } else {
+                    el.mainSayingEl.textContent = cachedText || STATIC_SENTENCE;
+                }
+                return;
+            }
+            if (mode === 'poetry') {
+                let poetryText = null, poetryDate = null;
+                try {
+                    poetryText = localStorage.getItem(STORAGE.POETRY);
+                    poetryDate = localStorage.getItem(STORAGE.POETRY_DATE);
+                } catch(e) {}
+                if (poetryText === STATIC_SENTENCE) {
+                    try {
+                        localStorage.removeItem(STORAGE.POETRY);
+                        localStorage.removeItem(STORAGE.POETRY_DATE);
+                    } catch(e) {}
+                    poetryText = null; poetryDate = null;
+                }
+                if (poetryDate === today && poetryText) {
+                    el.mainSayingEl.textContent = poetryText;
+                    return;
+                }
+                const text = await fetchDailyPoetry();
+                if (text) {
+                    try {
+                        localStorage.setItem(STORAGE.POETRY_DATE, today);
+                        localStorage.setItem(STORAGE.POETRY, text);
+                    } catch(e) {}
+                    el.mainSayingEl.textContent = text;
+                } else {
+                    el.mainSayingEl.textContent = poetryText || STATIC_SENTENCE;
+                }
+                return;
+            }
+        } catch(e) {
+            console.error('[loadSaying]', e);
+        }
+    }
+
+    // ===== 待办逻辑 =====
+    function getCurrentTask(){ return todoList[currentTaskIdx] || null; }
+
+    function loadTodo(){
+        try {
+            const raw = JSON.parse(localStorage.getItem(STORAGE.TODO)) || [];
+            todoList = raw.map(t => ({
+                text: String(t.text || ''),
+                done: !!t.done,
+                plannedMin: Math.max(1, +t.plannedMin || 25),
+                totalMs: Math.max(0, +t.totalMs || 0),
+                focusMs: Math.max(0, +t.focusMs || 0)
+            }));
+        } catch(e) { todoList = []; }
+        if (currentTaskIdx >= todoList.length) currentTaskIdx = Math.max(0, todoList.length - 1);
+    }
+    function saveTodo(){
+        try { localStorage.setItem(STORAGE.TODO, JSON.stringify(todoList)); } catch(e) {}
+    }
+    function renderTodo(){
+        if (!todoList.length) {
+            el.todoListBox.innerHTML = '<div style="opacity:.5;font-size:var(--ui-font);padding:8px 0;text-align:center;">暂无待办</div>';
+            return;
+        }
+        el.todoListBox.innerHTML = todoList.map((item, idx) => `
+            <div class="todo-item ${idx === currentTaskIdx ? 'current' : ''}" data-item="${idx}">
+                <input type="checkbox" ${item.done ? 'checked' : ''} data-check="${idx}">
+                <span class="todo-item-text ${item.done ? 'done' : ''}">${escapeHtml(item.text)}</span>
+                <span class="todo-del" data-del="${idx}">×</span>
+            </div>
+        `).join('');
+    }
+    function updateTodoNav(){
+        const task = getCurrentTask();
+        if (task && todoList.length > 0) {
+            el.todoNavTitle.textContent = `${task.text || '未命名'} (${currentTaskIdx + 1}/${todoList.length})`;
+            el.todoPlannedMin.value = task.plannedMin || 25;
+        } else {
+            el.todoNavTitle.textContent = '暂无任务';
+            el.todoPlannedMin.value = 25;
+        }
+        renderTodo();
+    }
+
+    /** 学习条显示逻辑：用户开关 && 有任务（不再依赖待办面板开关状态） */
+    function updateStudyBar(){
+        const shouldShow = el.showStudyBar.checked && todoList.length > 0;
+        el.studyBar.classList.toggle('show', shouldShow);
+        if (!shouldShow) return;
+
+        const task = getCurrentTask();
+        if (!task) return;
+
+        el.studyTaskName.textContent = task.text || '未命名任务';
+        let elapsed = 0;
+        if (studyState !== 'idle') elapsed = Date.now() - sessionStartAt;
+        el.studyTimeDisplay.textContent = fmtDuration(elapsed);
+
+        el.studyStartBtn.disabled = (studyState === 'focusing');
+        el.studyBreakBtn.disabled = (studyState !== 'focusing');
+        el.studyEndBtn.disabled = (studyState === 'idle');
+        el.studyStartBtn.classList.toggle('active', studyState === 'focusing');
+        el.studyBreakBtn.classList.toggle('active', studyState === 'break');
+
+        // 同步按钮文本
+        if (el.todoStudyToggleText) {
+            el.todoStudyToggleText.textContent = el.showStudyBar.checked ? '隐藏学习条' : '显示学习条';
+        }
+    }
+
+    function startStudy(){
+        if (studyState === 'idle') {
+            sessionStartAt = Date.now();
+            focusStartAt = Date.now();
+            focusAccumulated = 0;
+            studyState = 'focusing';
+            toast('开始学习 📚');
+        } else if (studyState === 'break') {
+            focusStartAt = Date.now();
+            studyState = 'focusing';
+            toast('继续专注 💪');
+        } else return;
+        updateStudyBar();
+    }
+    function breakStudy(){
+        if (studyState !== 'focusing') return;
+        focusAccumulated += Date.now() - focusStartAt;
+        studyState = 'break';
+        updateStudyBar();
+        toast('摸鱼休息 🐟');
+    }
+    function endStudy(){
+        if (studyState === 'idle') return;
+        const now = Date.now();
+        if (studyState === 'focusing') focusAccumulated += now - focusStartAt;
+        const totalMs = now - sessionStartAt;
+        const focusMs = focusAccumulated;
+        const task = getCurrentTask();
+        if (task) {
+            task.totalMs = (task.totalMs || 0) + totalMs;
+            task.focusMs = (task.focusMs || 0) + focusMs;
+            saveTodo();
+        }
+        studyState = 'idle';
+        focusAccumulated = 0;
+        updateStudyBar();
+        toast(`本次：专注 ${fmtDurationFriendly(focusMs)} / 总计 ${fmtDurationFriendly(totalMs)}`);
+    }
+    function showStats(){
+        const body = el.statsModalBody;
+        if (!todoList.length) {
+            body.innerHTML = '<div style="text-align:center;opacity:0.6;padding:20px;">暂无任务</div>';
+        } else {
+            body.innerHTML = todoList.map(task => {
+                const total = task.totalMs || 0;
+                const focus = task.focusMs || 0;
+                const rate = total > 0 ? Math.round(focus / total * 100) : 0;
+                return `
+                    <div class="stats-item">
+                        <div class="stats-item-name">${escapeHtml(task.text || '未命名')}</div>
+                        <div class="stats-item-row"><span>总计时时长</span><span>${fmtDurationFriendly(total)}</span></div>
+                        <div class="stats-item-row"><span>有效专注时长</span><span>${fmtDurationFriendly(focus)}</span></div>
+                        <div class="stats-item-row"><span>专注率</span><span class="stats-item-rate">${rate}%</span></div>
+                    </div>
+                `;
+            }).join('');
+        }
+        el.statsModal.classList.add('show');
+    }
+    function hideStats(){ el.statsModal.classList.remove('show'); }
+
+    function addTodo(){
+        const t = el.todoInput.value.trim();
+        if (!t) return;
+        todoList.push({ text: t, done: false, plannedMin: 25, totalMs: 0, focusMs: 0 });
+        el.todoInput.value = '';
+        currentTaskIdx = todoList.length - 1;
+        saveTodo();
+        updateTodoNav();
+        updateStudyBar();
+    }
+
+    // 待办事件
+    el.todoPrevBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!todoList.length) return;
+        currentTaskIdx = (currentTaskIdx - 1 + todoList.length) % todoList.length;
+        updateTodoNav();
+        updateStudyBar();
+    });
+    el.todoNextBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!todoList.length) return;
+        currentTaskIdx = (currentTaskIdx + 1) % todoList.length;
+        updateTodoNav();
+        updateStudyBar();
+    });
+    el.todoStatsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showStats();
+    });
+    el.statsModalClose.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideStats();
+    });
+    el.statsModal.addEventListener('click', (e) => {
+        // 点击弹窗背景关闭
+        if (e.target === el.statsModal) hideStats();
+    });
+    el.todoPlannedMin.addEventListener('change', () => {
+        const task = getCurrentTask();
+        if (task) {
+            task.plannedMin = Math.max(1, +el.todoPlannedMin.value || 25);
+            el.todoPlannedMin.value = task.plannedMin;
+            saveTodo();
+        }
+    });
+    el.todoAddBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addTodo();
+    });
+    el.todoInput.addEventListener('keydown', e => { if (e.key === 'Enter') addTodo(); });
+    el.todoInput.addEventListener('click', e => e.stopPropagation());
+
+    el.todoListBox.addEventListener('click', e => {
+        e.stopPropagation();
+        if (e.target.classList.contains('todo-del')) {
+            const idx = +e.target.dataset.del;
+            if (isNaN(idx)) return;
+            todoList.splice(idx, 1);
+            if (currentTaskIdx >= todoList.length) currentTaskIdx = Math.max(0, todoList.length - 1);
+            else if (currentTaskIdx > idx) currentTaskIdx--;
+            saveTodo();
+            updateTodoNav();
+            updateStudyBar();
+            return;
+        }
+        if (e.target.tagName === 'INPUT' && e.target.dataset.check !== undefined) {
+            const idx = +e.target.dataset.check;
+            if (isNaN(idx)) return;
+            todoList[idx].done = !todoList[idx].done;
+            saveTodo();
+            updateTodoNav();
+            return;
+        }
+        const item = e.target.closest('.todo-item');
+        if (item) {
+            const idx = +item.dataset.item;
+            if (!isNaN(idx) && idx !== currentTaskIdx) {
+                currentTaskIdx = idx;
+                updateTodoNav();
+                updateStudyBar();
+            }
+        }
+    });
+
+    // 学习条事件
+    el.studyStartBtn.addEventListener('click', (e) => { e.stopPropagation(); startStudy(); });
+    el.studyBreakBtn.addEventListener('click', (e) => { e.stopPropagation(); breakStudy(); });
+    el.studyEndBtn.addEventListener('click', (e) => { e.stopPropagation(); endStudy(); });
+
+    // 学习条开关（设置里的开关）
+    el.showStudyBar.addEventListener('change', () => {
+        try { localStorage.setItem(STORAGE.SHOW_STUDY_BAR, el.showStudyBar.checked ? '1' : '0'); } catch(e) {}
+        updateStudyBar();
+    });
+
+    // 待办面板底部：切换学习条按钮
+    el.todoStudyToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.showStudyBar.checked = !el.showStudyBar.checked;
+        try { localStorage.setItem(STORAGE.SHOW_STUDY_BAR, el.showStudyBar.checked ? '1' : '0'); } catch(e) {}
+        updateStudyBar();
+    });
+
+    // ===== 其他交互 =====
+    el.settingBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.settingPanel.classList.toggle('show');
+    });
+    el.settingPanel.addEventListener('click', e => e.stopPropagation());
+
+    el.mobileModeCb.addEventListener('change', () => {
+        document.body.classList.toggle('mobile-mode', el.mobileModeCb.checked);
+    });
+
+    function applyClockSize(){
+        let v = 'clamp(64px, 14vw, 96px)';
+        if (el.clkS.checked) v = 'clamp(48px, 12vw, 72px)';
+        else if (el.clkL.checked) v = 'clamp(78px, 16vw, 116px)';
+        document.documentElement.style.setProperty('--clock-font-size', v);
+    }
+    [el.clkS, el.clkM, el.clkL].forEach(r => r.addEventListener('change', applyClockSize));
+
+    function applyClockWeight(){
+        const w = document.querySelector('input[name="clockWeight"]:checked');
+        if (w) document.documentElement.style.setProperty('--clock-weight', w.value);
+    }
+    [el.w100, el.w300, el.w500].forEach(r => r.addEventListener('change', applyClockWeight));
+
+    function applyPanelVisible(){
+        el.itemCountdown.style.display = el.showCountdown.checked ? 'flex' : 'none';
+        el.itemTimer.style.display = el.showTimer.checked ? 'flex' : 'none';
+        el.itemTodo.style.display = el.showTodo.checked ? 'flex' : 'none';
+        el.itemPomodoro.style.display = el.showPomodoro.checked ? 'flex' : 'none';
+        el.itemExam.style.display = el.showExam.checked ? 'flex' : 'none';
+    }
+    [el.showCountdown, el.showTimer, el.showTodo, el.showPomodoro, el.showExam]
+        .forEach(cb => cb.addEventListener('change', applyPanelVisible));
+
+    function applyExtraVisible(){
+        el.weatherFooter.style.display = el.showWeather.checked ? 'block' : 'none';
+        el.holidayCountStr.style.display = el.showHoliday.checked ? 'block' : 'none';
+        el.pomodoroTopInline.classList.toggle('show', el.showPomodoroTop.checked);
+    }
+    [el.showWeather, el.showHoliday, el.showPomodoroTop]
+        .forEach(cb => cb.addEventListener('change', applyExtraVisible));
+
+    function setFocusMode(on){
+        focusMode = on;
+        document.body.classList.toggle('focus-mode', on);
+        el.focusBtn.classList.toggle('active', on);
+        el.settingPanel.classList.remove('show');
+        toast(on ? '专注模式已开启' : '专注模式已关闭');
+    }
+    el.focusBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setFocusMode(!focusMode);
+    });
+
+    function bindPanelToggle(btn, panel){
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            panel.classList.toggle('show');
+        });
+    }
+    bindPanelToggle(el.toggleCountdownBtn, el.countdownPanel);
+    bindPanelToggle(el.toggleTimerBtn, el.timerPanel);
+    bindPanelToggle(el.toggleTodoBtn, el.todoPanel);
+    bindPanelToggle(el.togglePomodoroBtn, el.pomodoroPanel);
+    bindPanelToggle(el.toggleExamBtn, el.examPanel);
+
+    // 面板内部点击不冒泡
+    [el.countdownPanel, el.timerPanel, el.todoPanel, el.pomodoroPanel, el.examPanel]
+        .forEach(p => p.addEventListener('click', e => e.stopPropagation()));
+
+    // ===== 全局点击处理（排除独立组件）=====
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+
+        // 设置面板
+        if (!el.settingPanel.contains(t) && !el.settingBtn.contains(t)) {
+            el.settingPanel.classList.remove('show');
+        }
+
+        // 排除独立组件区域
+        if (t.closest && (
+            t.closest('.stats-modal') ||
+            t.closest('.study-bar') ||
+            t.closest('.confirm-modal') ||
+            t.closest('.top-toast')
+        )) return;
+
+        // 右侧面板
+        const panels = [el.countdownPanel, el.timerPanel, el.todoPanel, el.pomodoroPanel, el.examPanel];
+        panels.forEach(panel => {
+            const btn = panel.previousElementSibling;
+            if (!panel.contains(t) && (!btn || !btn.contains(t))) {
+                panel.classList.remove('show');
+            }
+        });
+    });
+
+    // ===== 倒计时 / 计时器 / 番茄钟 / 考试 =====
+    function readCountInput(){
+        const d = +el.inpDay.value || 0;
+        const h = +el.inpHour.value || 0;
+        const m = +el.inpMin.value || 0;
+        const s = +el.inpSec.value || 0;
+        countTotal = (d * 86400 + h * 3600 + m * 60 + s) * 1000;
+        countRemain = countTotal;
+        el.customCountStr.textContent = fmtCount(countRemain);
+    }
+    el.startBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (countRunning) return;
+        readCountInput();
+        countRunning = true;
+        countTimer = setInterval(() => {
+            countRemain -= MS.s;
+            el.customCountStr.textContent = fmtCount(countRemain);
+            if (countRemain <= 0) {
+                clearInterval(countTimer);
+                countRunning = false;
+                toast('计时已完成');
+            }
+        }, MS.s);
+    });
+    el.pauseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!countRunning) return;
+        clearInterval(countTimer);
+        countRunning = false;
+    });
+
+    el.timerStart.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (timerRunning) return;
+        timerRunning = true;
+        timerInterval = setInterval(() => {
+            timerMs += 10;
+            el.timerDisplay.textContent = fmtTimer(timerMs);
+        }, 10);
+    });
+    el.timerPause.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!timerRunning) return;
+        clearInterval(timerInterval);
+        timerRunning = false;
+    });
+    el.timerReset.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearInterval(timerInterval);
+        timerRunning = false;
+        timerMs = 0;
+        el.timerDisplay.textContent = fmtTimer(0);
+    });
+    el.timerMark.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const now = new Date();
+        const mark = pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds()) + '｜' + fmtTimer(timerMs);
+        const div = document.createElement('div');
+        div.textContent = mark;
+        el.timerMarkLog.appendChild(div);
+        el.timerMarkLog.scrollTop = el.timerMarkLog.scrollHeight;
+    });
+    el.timerClearMarksBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        el.timerMarkLog.innerHTML = '';
+        toast('标记已清除');
+    });
+
+    function updatePomoDisplay(){
+        el.pomodoroCountStr.textContent = fmtMinSec(pomoRemain);
+        el.pomodoroTopInline.textContent = '番茄：' + fmtMinSec(pomoRemain) + '【' + (pomoIsWork ? '工作' : '休息') + '】';
+    }
+    function loadPomo(){
+        const w = +el.pomodoroWorkMin.value || 25;
+        const r = +el.pomodoroRestMin.value || 5;
+        pomoWork = w * MS.m;
+        pomoRest = r * MS.m;
+        pomoIsWork = true;
+        pomoRemain = pomoWork;
+        el.pomodoroModeText.textContent = '工作';
+        updatePomoDisplay();
+    }
+    function startPomoLoop(isWork){
+        pomoIsWork = isWork;
+        pomoRemain = isWork ? pomoWork : pomoRest;
+        el.pomodoroModeText.textContent = isWork ? '工作' : '休息';
+        updatePomoDisplay();
+        pomoRunning = true;
+        pomoTimer = setInterval(() => {
+            pomoRemain -= MS.s;
+            updatePomoDisplay();
+            if (pomoRemain <= 0) {
+                clearInterval(pomoTimer);
+                pomoRunning = false;
+                const tip = isWork ? '准备好开始休息了吗？' : '准备好开始工作了吗？';
+                confirmBox(tip, () => startPomoLoop(!isWork));
+            }
+        }, MS.s);
+    }
+    el.pomodoroStart.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pomoRunning) return;
+        loadPomo();
+        startPomoLoop(true);
+    });
+    el.pomodoroPause.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!pomoRunning) return;
+        clearInterval(pomoTimer);
+        pomoRunning = false;
+    });
+    el.pomodoroReset.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearInterval(pomoTimer);
+        pomoRunning = false;
+        loadPomo();
+    });
+
+    function updateExam(){
+        if (!el.examShowSwitch.checked || !examTarget) {
+            el.examCountWrap.style.display = 'none';
+            return;
+        }
+        el.examCountWrap.style.display = 'block';
+        const diff = examTarget - Date.now();
+        if (diff <= 0) {
+            el.examCountText.textContent = '考试已结束';
+            return;
+        }
+        const day = Math.floor(diff / MS.d);
+        const h = Math.floor((diff % MS.d) / MS.h);
+        const m = Math.floor((diff % MS.h) / MS.m);
+        el.examCountText.textContent = '距离考试：' + day + '天 ' + h + '时' + m + '分';
+    }
+    el.examShowSwitch.addEventListener('change', updateExam);
+    el.examSetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const y = +el.examY.value;
+        const m = +el.examM.value;
+        const d = +el.examD.value;
+        if (!y || !m || !d) return;
+        examTarget = new Date(y, m - 1, d, 0, 0, 0).getTime();
+        updateExam();
+    });
+
+    // ===== 天气 =====
+    function clearWeather(){
+        document.querySelectorAll('.star,.rain').forEach(n => n.remove());
+    }
+    function createStars(){
+        for (let i = 0; i < 40; i++) {
+            const s = document.createElement('div');
+            s.className = 'star';
+            s.style.left = Math.random() * 100 + '%';
+            s.style.top = Math.random() * 48 + '%';
+            s.style.animationDelay = Math.random() * 3 + 's';
+            el.skyWrap.appendChild(s);
+        }
+    }
+    function createRain(){
+        for (let i = 0; i < 30; i++) {
+            const r = document.createElement('div');
+            r.className = 'rain';
+            r.style.left = Math.random() * 100 + '%';
+            r.style.animationDelay = Math.random() * 0.8 + 's';
+            el.skyWrap.appendChild(r);
+        }
+    }
+    function updateWeatherEffect(type){
+        if (weatherLock) return;
+        weatherLock = true;
+        setTimeout(() => weatherLock = false, 1500);
+        clearWeather();
+        const night = new Date().getHours() >= 20 || new Date().getHours() < 6;
+        if (type === 'clear' && night) createStars();
+        if (type === 'rainy') createRain();
+    }
+    async function fetchWeather(lat, lon){
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current=temperature_2m,weather_code&daily=sunrise,sunset&timezone=auto';
+        try {
+            const res = await fetchWithTimeout(url, 8000);
+            if (!res.ok) throw 0;
+            const json = await res.json();
+            if (json.daily && json.daily.sunrise && json.daily.sunrise[0]) sunriseTs = new Date(json.daily.sunrise[0]).getTime();
+            if (json.daily && json.daily.sunset && json.daily.sunset[0]) sunsetTs = new Date(json.daily.sunset[0]).getTime();
+            const wc = json.current.weather_code;
+            const temp = json.current.temperature_2m;
+            const info = WEATHER_MAP[wc] || ['未知', 'clear'];
+            return { ok: true, text: info[0], temp, type: info[1] };
+        } catch(e) {
+            return { ok: false, text: '--', temp: '--', type: 'clear' };
+        }
+    }
+    async function initWeather(){
+        let lat = FALLBACK.lat, lon = FALLBACK.lon;
+        try {
+            const pos = await new Promise((res, rej) => {
+                if (!navigator.geolocation) rej();
+                navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: false, timeout: 8000 });
+            });
+            lat = pos.coords.latitude;
+            lon = pos.coords.longitude;
+        } catch(e) {}
+        const r = await fetchWeather(lat, lon);
+        if (r.ok) {
+            el.weatherFooter.textContent = r.text + '｜' + r.temp + '℃｜数据来源：Open-Meteo';
+            weatherType = r.type;
+        } else {
+            el.weatherFooter.textContent = '天气｜--℃｜接口不可用';
+            weatherType = 'clear';
+        }
+        updateWeatherEffect(weatherType);
+    }
+
+    // ===== 模式切换 =====
+    [el.sayingOff, el.sayingStatic, el.sayingDaily, el.sayingPoetry]
+        .forEach(r => r.addEventListener('change', loadSaying));
+
+    // ===== 恢复学习条开关 =====
+    try {
+        const savedShowStudyBar = localStorage.getItem(STORAGE.SHOW_STUDY_BAR);
+        if (savedShowStudyBar === '0') el.showStudyBar.checked = false;
+    } catch(e) {}
+
+    // ===== 初始化 =====
+    loadTodo();
+    updateTodoNav();
+    updateStudyBar();
+    applyClockSize();
+    applyClockWeight();
+    applyPanelVisible();
+    applyExtraVisible();
+    loadPomo();
+    loadSaying();
+    setInterval(tick, 500);
+    tick();
+    initWeather();
+});
+</script>
+</body>
+</html>
